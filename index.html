@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- 제목 변경 -->
+    <title>학생 태도 평가 (읽기/쓰기)</title>
+    <!-- Tailwind CSS 로드 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 터치 시 회색 배경이 깜빡이는 현상 방지 */
+        * {
+            -webkit-tap-highlight-color: transparent;
+        }
+        /* 로더 스타일 */
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        /* 버튼 내 로딩 스피너 스타일 추가 */
+        .btn-loader {
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #ffffff;
+            /* bg-gray-700 등 어두운 배경 버튼에서도 보이도록 */
+            border-top-color: #ffffff; 
+            border-radius: 50%;
+            width: 16px;
+            height: 16px;
+            display: inline-block;
+            vertical-align: middle;
+            animation: spin 0.8s linear infinite;
+        }
+        /* 잠 버튼(노란색)용 로더 */
+        .sleep-btn .btn-loader {
+            border-top-color: #333; /* 노란 배경이므로 어둡게 */
+        }
+    </style>
+</head>
+<body class="bg-gray-100 font-sans min-h-screen">
+    
+    <div class="container max-w-4xl mx-auto p-4">
+        <header class="text-center mb-6">
+            <h1 class="text-3xl font-bold text-gray-800">학생 태도 평가</h1>
+        </header>
+
+        <!-- 필터 섹션 -->
+        <div id="filter-section" class="mb-4 p-4 bg-white rounded-lg shadow flex flex-col sm:flex-row gap-4">
+            <div class="flex-1">
+                <label for="grade-select" class="block text-sm font-medium text-gray-700 mb-1">학년</label>
+                <select id="grade-select" class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500">
+                    <option value="">전체 학년</option>
+                </select>
+            </div>
+            <div class="flex-1">
+                <label for="class-select" class="block text-sm font-medium text-gray-700 mb-1">반</label>
+                <select id="class-select" class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500">
+                    <option value="">전체 반</option>
+                </select>
+            </div>
+            <button id="search-button" class="w-full sm:w-auto self-end bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-md transition duration-150">
+                조회
+            </button>
+        </div>
+
+        <!-- 메시지 영역 (로딩 및 오류) -->
+        <div id="message-area" class="text-center p-4">
+            <div id="loader" class="loader mx-auto hidden"></div>
+            <p id="message-text" class="text-gray-600"></p>
+        </div>
+        
+        <!-- (신규) GAS URL 경고 메시지 -->
+        <div id="gas-url-warning" class="hidden p-4 mb-4 bg-red-100 text-red-700 rounded-lg shadow">
+            <strong>설정 오류:</strong> <code>GAS_WEB_APP_URL</code>이(가) 설정되지 않았습니다. 
+            HTML 파일의 121번째 줄을 Google Apps Script 배포 URL으로 수정하세요. (데이터 쓰기 불가)
+        </div>
+        
+        <!-- (신규) 저장 상태 표시기 -->
+        <div id="save-status" class="fixed top-4 right-4 z-50 transition-opacity duration-300 opacity-0 p-3 rounded-lg text-white shadow-lg">
+            저장 중...
+        </div>
+
+        <!-- 학생 목록 -->
+        <div id="student-list" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <!-- 학생 카드는 템플릿으로부터 여기에 삽입됩니다. -->
+        </div>
+    </div>
+
+    <!-- 학생 카드 템플릿 (숨김) -->
+    <template id="student-card-template">
+        <div class="bg-white rounded-lg shadow-md overflow-hidden transition-all duration-300 hover:shadow-lg">
+            <div class="p-4">
+                <!-- (수정) 템플릿 오류 수정을 위해 누락된 요소 복원 -->
+                <div class="flex justify-between items-center mb-2">
+                    <h3 class="text-lg font-bold text-gray-900" data-name>학생 이름</h3>
+                    <span class="text-sm font-medium text-indigo-600 bg-indigo-100 px-2 py-0.5 rounded-full" data-id>학번</span>
+                </div>
+                <p class="text-gray-600 mb-4" data-info>학년 반 번호</p>
+                
+                <!-- (수정) 평가 버튼 그리드 구조 변경 (버튼 + 숫자 칸) -->
+                <div class="grid grid-cols-3 gap-2">
+                    
+                    <!-- 1. 태도 -->
+                    <div class="flex flex-col items-center">
+                        <button data-type="attitude" class="attitude-btn bg-green-500 hover:bg-green-600 text-white py-2 px-2 rounded-lg text-sm font-medium transition duration-150 disabled:opacity-50 w-full">
+                            태도
+                        </button>
+                        <!-- 숫자 표시 칸 -->
+                        <div data-count="attitude" class="mt-1 w-full bg-gray-100 rounded text-center py-1 text-lg font-bold text-gray-800">0</div>
+                    </div>
+
+                    <!-- 2. 멘티 -->
+                    <div class="flex flex-col items-center">
+                        <button data-type="mentee" class="mentee-btn bg-blue-500 hover:bg-blue-600 text-white py-2 px-2 rounded-lg text-sm font-medium transition duration-150 disabled:opacity-50 w-full">
+                            멘티
+                        </button>
+                        <div data-count="mentee" class="mt-1 w-full bg-gray-100 rounded text-center py-1 text-lg font-bold text-gray-800">0</div>
+                    </div>
+
+                    <!-- 3. 발표 -->
+                    <div class="flex flex-col items-center">
+                        <button data-type="present" class="present-btn bg-indigo-500 hover:bg-indigo-600 text-white py-2 px-2 rounded-lg text-sm font-medium transition duration-150 disabled:opacity-50 w-full">
+                            발표
+                        </button>
+                        <div data-count="present" class="mt-1 w-full bg-gray-100 rounded text-center py-1 text-lg font-bold text-gray-800">0</div>
+                    </div>
+
+                    <!-- 4. 잠 -->
+                    <div class="flex flex-col items-center">
+                        <button data-type="sleep" class="sleep-btn bg-yellow-500 hover:bg-yellow-600 text-gray-800 py-2 px-2 rounded-lg text-sm font-medium transition duration-150 disabled:opacity-50 w-full">
+                            잠
+                        </button>
+                        <div data-count="sleep" class="mt-1 w-full bg-gray-100 rounded text-center py-1 text-lg font-bold text-gray-800">0</div>
+                    </div>
+
+                    <!-- 5. 방해 -->
+                    <div class="flex flex-col items-center">
+                        <button data-type="disturb" class="disturb-btn bg-orange-500 hover:bg-orange-600 text-white py-2 px-2 rounded-lg text-sm font-medium transition duration-150 disabled:opacity-50 w-full">
+                            방해
+                        </button>
+                        <div data-count="disturb" class="mt-1 w-full bg-gray-100 rounded text-center py-1 text-lg font-bold text-gray-800">0</div>
+                    </div>
+
+                    <!-- 6. 준비미흡 -->
+                    <div class="flex flex-col items-center">
+                        <button data-type="unprepared" class="unprepared-btn bg-red-500 hover:bg-red-600 text-white py-2 px-2 rounded-lg text-sm font-medium transition duration-150 disabled:opacity-50 w-full">
+                            준비미흡
+                        </button>
+                        <div data-count="unprepared" class="mt-1 w-full bg-gray-100 rounded text-center py-1 text-lg font-bold text-gray-800">0</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <script>
+        // --- (중요!) Google Apps Script 웹 앱 URL ---
+        // 1단계에서 배포하고 복사한 URL을 여기에 붙여넣으세요.
+        // 예: "https://script.google.com/macros/s/AKfycby.../exec"
+        const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycby_r9oA2F_J_L_vM5lC7h0NqzWLY_l_dY7R0QJ8lF13Ff_1yVnQp-bYxIeG-uXUq5K2/exec";
+
+        // --- Google Sheet 정보 ---
+        // 1. Google Sheet 문서의 ID
+        const SHEET_ID = '1TJDpVdzDXCXE8J2fKgwBVfehEkLo2anK-rCa80w8OV0';
+        // 2. Google Sheet 문서의 시트 이름 (탭 이름)
+        const SHEET_NAME = 'Sheet1'; // 예: 'Sheet1' 또는 '시트1'
+
+        // Google 시각화 API(gviz)를 사용하여 시트 데이터를 JSON으로 가져오는 URL
+        const DATA_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?sheet=${SHEET_NAME}`;
+
+        // 각 평가 항목의 시트 열 이름 (Code.gs의 COLUMN_MAP과 일치)
+        const DATA_TYPES = ['attitude', 'mentee', 'present', 'sleep', 'disturb', 'unprepared'];
+        // 시트에서 각 항목이 몇 번째 열(0부터 시작)에 있는지 정의 (B=1, C=2, D=3...)
+        const COL_MAP = {
+            id: 1,       // 학번 (B열)
+            name: 2,     // 이름 (C열)
+            attitude: 3, // D열
+            mentee: 4,   // E열
+            present: 5,  // F열
+            sleep: 6,    // G열
+            disturb: 7,  // H열
+            unprepared: 8// I열
+        };
+
+        // --- DOM 요소 선택 ---
+        const filterSection = document.getElementById('filter-section');
+        const gradeSelect = document.getElementById('grade-select');
+        const classSelect = document.getElementById('class-select');
+        const searchButton = document.getElementById('search-button');
+        const messageArea = document.getElementById('message-area');
+        const loader = document.getElementById('loader');
+        const messageText = document.getElementById('message-text');
+        const studentList = document.getElementById('student-list');
+        const cardTemplate = document.getElementById('student-card-template');
+        const gasWarning = document.getElementById('gas-url-warning');
+        const saveStatus = document.getElementById('save-status');
+
+        // --- 전역 데이터 저장소 ---
+        let allStudents = []; // 모든 학생 데이터
+        let localCounts = {}; // 학생별 카운트 로컬 캐시 (빠른 UI 반응용)
+
+        // --- 앱 초기화 ---
+        document.addEventListener('DOMContentLoaded', initializeApp);
+
+        async function initializeApp() {
+            // (신규) GAS URL 설정 확인
+            if (!GAS_WEB_APP_URL || GAS_WEB_APP_URL.includes("...")) {
+                gasWarning.classList.remove('hidden');
+            }
+            
+            searchButton.addEventListener('click', displayStudents);
+            
+            // 학생 데이터 로드
+            messageText.textContent = '학생 데이터를 불러오는 중...';
+            loader.classList.remove('hidden');
+
+            try {
+                // (수정) CORS 오류 방지를 위해 mode: 'cors' 추가
+                const response = await fetch(DATA_URL, { mode: 'cors' });
+                if (!response.ok) {
+                    throw new Error('네트워크 응답 오류');
+                }
+                const text = await response.text();
+                
+                // Google 시각화 API 응답은 JSONP 형식이므로, 실제 JSON만 추출
+                const jsonStr = text.match(/google\.visualization\.Query\.setResponse\((.*)\);/s);
+                if (!jsonStr || !jsonStr[1]) {
+                    throw new Error('Google 시각화 API 응답 형식이 올바르지 않습니다.');
+                }
+                
+                const json = JSON.parse(jsonStr[1]);
+                
+                if (json.status === 'error') {
+                    throw new Error(json.errors.map(e => e.detailed_message).join(', '));
+                }
+
+                allStudents = parseStudentData(json.table);
+                populateFilters(allStudents);
+                
+                messageText.textContent = '조회할 학년과 반을 선택하세요.';
+
+            } catch (error) {
+                console.error('데이터 로드 실패:', error);
+                messageText.textContent = `오류 발생: ${error.message}. 시트가 공개(링크가 있는 모든 사용자에게 보기 허용)로 설정되어 있는지 확인하세요.`;
+                messageArea.classList.add('text-red-500');
+            } finally {
+                loader.classList.add('hidden');
+            }
+        }
+
+        // --- 데이터 파싱 ---
+        function parseStudentData(table) {
+            const students = [];
+            const grades = new Set();
+            const classes = new Set();
+
+            /* (수정) 10501 학생 누락 오류 해결 (i=1 -> i=0)
+             * gviz API 응답의 table.rows 배열은 헤더를 제외한
+             * 데이터 행(학생 10501)부터 [0]번 인덱스로 시작합니다.
+             */
+            for (let i = 0; i < table.rows.length; i++) {
+                const row = table.rows[i].c;
+                
+                // 학번(B열)이 없으면 유효한 학생 데이터로 보지 않음
+                // (수정) studentId가 숫자로 반환될 수 있으므로 String()으로 감싸줍니다.
+                const studentId = row[COL_MAP.id] ? String(row[COL_MAP.id].v) : null;
+                if (!studentId) continue;
+
+                const name = row[COL_MAP.name] ? row[COL_MAP.name].v : '이름없음';
+                
+                // 학번에서 학년, 반, 번호 추출
+                const grade = studentId.substring(0, 1);
+                const classNum = studentId.substring(1, 3);
+                const studentNum = studentId.substring(3, 5);
+                
+                grades.add(grade);
+                classes.add(classNum);
+
+                const studentData = {
+                    id: studentId,
+                    name: name,
+                    grade: grade,
+                    classNum: classNum,
+                    studentNum: studentNum,
+                    info: `${grade}학년 ${classNum}반 ${studentNum}번`
+                };
+                
+                students.push(studentData);
+
+                // 로컬 카운트 캐시 초기화
+                localCounts[studentId] = {};
+                DATA_TYPES.forEach(type => {
+                    const colIndex = COL_MAP[type];
+                    localCounts[studentId][type] = (row[colIndex] && row[colIndex].v) ? row[colIndex].v : 0;
+                });
+            }
+            return students;
+        }
+
+        // --- 필터 옵션 채우기 ---
+        function populateFilters(students) {
+            const grades = [...new Set(students.map(s => s.grade))].sort();
+            const classes = [...new Set(students.map(s => s.classNum))].sort();
+
+            grades.forEach(grade => {
+                const option = document.createElement('option');
+                option.value = grade;
+                option.textContent = `${grade}학년`;
+                gradeSelect.appendChild(option);
+            });
+
+            classes.forEach(classNum => {
+                const option = document.createElement('option');
+                option.value = classNum;
+                option.textContent = `${classNum}반`;
+                classSelect.appendChild(option);
+            });
+        }
+
+        // --- 학생 목록 표시 ---
+        function displayStudents() {
+            const selectedGrade = gradeSelect.value;
+            const selectedClass = classSelect.value;
+            
+            studentList.innerHTML = ''; // 기존 목록 비우기
+
+            if (!selectedGrade || !selectedClass) {
+                messageText.textContent = '조회할 학년과 반을 모두 선택하세요.';
+                return;
+            }
+
+            const filteredStudents = allStudents.filter(student => {
+                return student.grade === selectedGrade && student.classNum === selectedClass;
+            });
+            
+            // 학번(번호) 순으로 정렬
+            filteredStudents.sort((a, b) => a.studentNum.localeCompare(b.studentNum));
+
+            if (filteredStudents.length === 0) {
+                messageText.textContent = '해당 학년/반에 학생이 없습니다.';
+            } else {
+                messageText.textContent = ''; // 메시지 비우기
+                filteredStudents.forEach(student => {
+                    const card = createStudentCard(student);
+                    studentList.appendChild(card);
+                });
+            }
+        }
+
+        // --- 학생 카드 생성 ---
+        function createStudentCard(student) {
+            const card = cardTemplate.content.cloneNode(true).firstElementChild;
+            
+            // (수정) 템플릿 오류 수정을 위해 [data-name] 등 선택자 사용
+            card.querySelector('[data-name]').textContent = student.name;
+            card.querySelector('[data-id]').textContent = student.id;
+            card.querySelector('[data-info]').textContent = student.info;
+
+            const counts = localCounts[student.id];
+
+            // 버튼 및 카운터 설정
+            const buttons = card.querySelectorAll('button[data-type]');
+            buttons.forEach(button => {
+                const type = button.dataset.type;
+                
+                /* (수정) 버튼 내부 span 대신, 카드에서 data-count를 가진 div를 찾습니다 */
+                const countDisplay = card.querySelector(`div[data-count="${type}"]`);
+                
+                countDisplay.textContent = counts[type] || 0; // 현재 카운트 표시
+
+                // 클릭 및 터치 이벤트 핸들러 (비동기 처리로 변경)
+                const handler = async (e) => {
+                    e.preventDefault(); // 더블 탭 확대 방지
+                    
+                    showSaveStatus('저장 중...', 'loading');
+
+                    // 버튼 비활성화 (중복 클릭 방지)
+                    button.disabled = true;
+                    /* (수정) 버튼 내부 텍스트만 저장 (span이 없음) */
+                    const originalText = button.innerHTML; 
+                    button.innerHTML += ' <span class="btn-loader"></span>'; // 로더 추가
+
+                    try {
+                        // (수정) 로컬 카운트 대신 Google Sheet 업데이트 함수 호출
+                        const newValue = await updateSheetOnGoogle(student.id, type);
+                        
+                        /* (수정) countSpan 대신 countDisplay의 텍스트를 업데이트합니다 */
+                        countDisplay.textContent = newValue;
+                        localCounts[student.id][type] = newValue; // 로컬 캐시 업데이트
+                        showSaveStatus('저장 완료!', 'success');
+
+                    } catch (error) {
+                        console.error('시트 업데이트 실패:', error);
+                        showSaveStatus(`저장 실패: ${error.message}`, 'error');
+                        // UI를 원래대로 되돌릴 수 있음 (선택 사항)
+                    } finally {
+                        // 버튼 활성화 및 로더 제거
+                        button.disabled = false;
+                        /* (수정) 로더가 제거된 원래 텍스트로 복원 */
+                        button.innerHTML = originalText; 
+                    }
+                };
+
+                // 터치와 클릭 이벤트 모두 등록
+                button.addEventListener('touchstart', handler, { passive: false });
+                button.addEventListener('click', handler);
+            });
+
+            return card;
+        }
+
+        // --- (신규) Google Sheet 업데이트 함수 ---
+        async function updateSheetOnGoogle(studentId, type) {
+            if (!GAS_WEB_APP_URL || GAS_WEB_APP_URL.includes("...")) {
+                throw new Error("GAS 웹 앱 URL이 설정되지 않았습니다.");
+            }
+            
+            // (수정) CORS Preflight 우회를 위해 Content-Type을 text/plain으로 변경
+            const response = await fetch(GAS_WEB_APP_URL, {
+                method: 'POST',
+                mode: 'cors', // CORS 요청 명시
+                headers: {
+                    'Content-Type': 'text/plain;charset=utf-8',
+                },
+                body: JSON.stringify({ studentId: studentId, type: type })
+            });
+
+            if (!response.ok) {
+                throw new Error(`서버 응답 오류: ${response.statusText}`);
+            }
+
+            const result = await response.json();
+
+            if (result.status === 'success') {
+                return result.newValue; // GAS에서 반환된 새 값
+            } else {
+                throw new Error(result.message || '알 수 없는 스크립트 오류');
+            }
+        }
+
+        // --- (신규) 저장 상태 표시 함수 ---
+        let statusTimer;
+        function showSaveStatus(message, type = 'loading') {
+            clearTimeout(statusTimer); // 이전 타이머 제거
+            
+            saveStatus.classList.remove('opacity-0');
+            saveStatus.textContent = message;
+
+            // Tailwind 클래스 초기화 후 type에 맞게 설정
+            saveStatus.className = 'fixed top-4 right-4 z-50 transition-opacity duration-300 p-3 rounded-lg text-white shadow-lg';
+            
+            if (type === 'success') {
+                saveStatus.classList.add('bg-green-500');
+            } else if (type === 'error') {
+                saveStatus.classList.add('bg-red-500');
+            } else { // loading
+                saveStatus.classList.add('bg-gray-700');
+            }
+
+            // 일정 시간 후 사라짐 (로딩 중 제외)
+            if (type !== 'loading') {
+                statusTimer = setTimeout(() => {
+                    saveStatus.classList.add('opacity-0');
+                }, 2000); // 2초 후 사라짐
+            }
+        }
+
+    </script>
+</body>
+</html>
